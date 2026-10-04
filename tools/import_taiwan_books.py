@@ -28,16 +28,19 @@ def field(row, names):
     return ""
 
 def isbn_values(raw):
-    # Handles ISBN in brackets, multiple ISBNs, and ISBN-10 (including X).
-    for chunk in re.findall(r"(?<![0-9])(?:97[89][0-9 \-]{10,20}|[0-9][0-9 \-]{8,16}[0-9Xx])(?![0-9])", raw):
-        digits = re.sub(r"[^0-9Xx]", "", chunk).upper()
-        if len(digits) == 10:
-            if sum((10-i)*(10 if n=="X" else int(n)) for i,n in enumerate(digits)) % 11:
+    # Extract isolated ISBN strings; a semicolon or parenthesis must not
+    # accidentally merge two edition ISBNs into one long match.
+    candidates=re.findall(r"(?<![0-9A-Za-z])(?:97[89][0-9 -]{10,17}|[0-9][0-9 -]{8,13}[0-9Xx])(?![0-9A-Za-z])",raw)
+    for chunk in candidates:
+        digits=re.sub(r"[^0-9Xx]","",chunk).upper()
+        if len(digits)==10:
+            if any(x=="X" for x in digits[:-1]):continue
+            if sum((10-i)*(10 if n=="X" else int(n)) for i,n in enumerate(digits))%11:
                 continue
-            stem = "978" + digits[:9]
-            chk = (10-sum(int(n)*(1 if i%2==0 else 3) for i,n in enumerate(stem))%10)%10
-            digits = stem+str(chk)
-        if len(digits) != 13 or not digits.startswith(("978","979")):
+            stem="978"+digits[:9]
+            chk=(10-sum(int(n)*(1 if i%2==0 else 3) for i,n in enumerate(stem))%10)%10
+            digits=stem+str(chk)
+        if len(digits)!=13 or not digits.startswith(("978","979")) or not digits.isdigit():
             continue
         if sum(int(n)*(1 if i%2==0 else 3) for i,n in enumerate(digits))%10:
             continue
