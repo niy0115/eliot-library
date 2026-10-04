@@ -1,31 +1,40 @@
 # 倫倫的圖書館
 
-純前端 ISBN 掃描與家庭藏書管理網站。資料保存在瀏覽器 localStorage，可匯出／匯入 JSON 備份。
+純前端家庭藏書管理網站，支援掃描 ISBN-13、輸入 ISBN-10/13。藏書保存在瀏覽器 localStorage；請定期匯出 JSON 備份。
 
 ## ISBN 查詢順序
 
-1. Google Books（公開查詢）
-2. Open Library（公開查詢）
-3. 本地台灣書目索引 `data/taiwan-books.json`
+1. 經核對的繁體中文補充書目：`data/book-corrections.json`
+2. 國家圖書館／NBINet 官方書目：`data/taiwan-books.json`
+3. Google Books（優先補封面，不覆蓋已有中文書目）
+4. Open Library（備援）
 
-目前台灣書目索引**僅建立空白結構，尚未匯入官方資料**；沒有書目時會要求手動填寫。切勿將尚未確認的書目資料當成查詢結果。
+手動新增的藏書不會自動上傳至 GitHub 共用資料庫。
 
-## 匯入官方台灣書目 CSV
+## 自動擴充台灣官方資料
 
-取得國家圖書館或 NBINet **授權允許再利用**的 CSV 後，在專案根目錄執行：
+GitHub Actions：[`Update Taiwan book catalog`](https://github.com/niy0115/eliot-library/actions/workflows/update-taiwan-books.yml)。
+
+- 匯入國圖 2024 年度新增書目、NBINet 2026 年第 2 季，以及國圖 2025 年 6 月至 2026 年 6 月每月新書預告資料。
+- 執行 `tools/download_official_books.py` 下載資料，再以 `tools/import_taiwan_books.py` 去重並合併至 `data/taiwan-books.json`。
+- 每月 8 日自動檢查，也能到 Actions 頁面選擇 **Run workflow** 手動執行；更新匯入程式也會觸發。
+- 部分官網下載失敗時保留原書目、不刪除資料，並在 Actions 日誌列出警告。若所有來源失敗，任務不會覆蓋資料庫。
+- 月報目前使用官方下載頁面已列出的 2025/06～2026/06 檔案；未來新月份發布後，需更新下載清單。
+
+若你已下載其他年度／月份的授權 CSV，可直接執行：
 
 ```bash
 python tools/import_taiwan_books.py path/to/official.csv
 ```
 
-匯入器支援 UTF-8 BOM／CP950、常見的 ISBN／書名／作者／出版社／出版日期欄名，並驗證 ISBN-13 校驗碼。請先檢查來源欄位與授權條款；匯入後確認 `data/taiwan-books.json` 的書目品質，再 commit 與部署。
+資料來源及授權（政府資料開放授權條款第 1 版）：
+- [NBINet 圖書聯合目錄](https://data.gov.tw/dataset/7502)
+- [國家圖書館館藏書目](https://data.gov.tw/dataset/27311)
+- [臺灣出版新書預告書訊](https://data.gov.tw/dataset/6730)
+- [政府資料開放授權條款](https://data.gov.tw/license)
 
-官方入口：
-- https://isbn.ncl.edu.tw/NEW_ISBNNet/index.php
-- https://data.gov.tw/
-
-注意：GitHub Pages 不支援直接以伺服器程式即時抓取國圖網站。這個方案是將獲准再利用的 CSV 預先整理成 JSON，提供前端靜態查詢。更新 CSV 後須重新匯入並部署。
+網站仍為 GitHub Pages 靜態網站，不需要書目查詢 API 金鑰或後端服務。大量資料需先於 GitHub Actions 轉成 JSON，手機只負責讀取索引。
 
 ## Authentication
 
-沒有使用者登入、API 金鑰或 Token。藏書儲存在本機瀏覽器，不會跨裝置同步。請定期匯出備份。
+無登入、API 金鑰或 Token。藏書保存在同一瀏覽器，不會跨裝置同步。
