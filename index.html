@@ -31,19 +31,49 @@ function render(){ $('total').textContent=books.length;$('done').textContent=boo
 function showPreview(b){preview={status:'unread',notes:'',...b};$('pTitle').textContent=preview.title||'未找到書名';$('pMeta').textContent=[preview.author,preview.publisher,preview.date,preview.isbn?'ISBN '+preview.isbn:''].filter(Boolean).join(' · ');$('pCover').src=safeImage(preview.cover)||'';$('pCover').onerror=()=>{$('pCover').onerror=null;$('pCover').removeAttribute('src');};$('preview').style.display='block';}
 async function getJSON(url){const c=new AbortController(),timer=setTimeout(()=>c.abort(),11000);try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw Error('HTTP '+r.status);return await r.json();}finally{clearTimeout(timer);}}
 const TAIWAN_BOOKS_URL='data/taiwan-books.json';
-let taiwanBooksPromise=null;
-async function lookupTaiwanBook(isbn){
-  if(!taiwanBooksPromise) taiwanBooksPromise=getJSON(TAIWAN_BOOKS_URL).catch(e=>{taiwanBooksPromise=null;throw e;});
-  const data=await taiwanBooksPromise;
-  const b=data.books?.[isbn];
+const CORRECTIONS_URL='data/book-corrections.json';
+let taiwanBooksPromise=null,correctionsPromise=null;
+async function lookupLocalCatalog(isbn,url,promiseName){
+  let p=promiseName==='corrections'?correctionsPromise:taiwanBooksPromise;
+  if(!p){
+    p=getJSON(url).catch(e=>{if(promiseName==='corrections')correctionsPromise=null;else taiwanBooksPromise=null;throw e;});
+    if(promiseName==='corrections')correctionsPromise=p;else taiwanBooksPromise=p;
+  }
+  const data=await p,b=data.books?.[isbn];
   return b?.title?{isbn,title:b.title,author:b.author||'',publisher:b.publisher||'',date:b.date||'',cover:b.cover||''}:null;
 }
-function bookSearchLinks(isbn){
-  return '也可到國家圖書館 ISBN 中心、博客來或誠品以 ISBN '+isbn+' 搜尋。';
+async function lookupGoogleBook(isbn){
+  const g=await getJSON('https://www.googleapis.com/books/v1/volumes?q='+encodeURIComponent('isbn:'+isbn)+'&maxResults=1');
+  const v=g.items?.[0]?.volumeInfo;
+  return v?.title?{isbn,title:v.title,author:(v.authors||[]).join('、'),publisher:v.publisher||'',date:v.publishedDate||'',cover:(v.imageLinks?.thumbnail||v.imageLinks?.smallThumbnail||'').replace(/^http:/,'https:')}:null;
 }
-async function lookup(raw){const isbn=isbn13(raw);if(!isbn){notify('請輸入有效的 ISBN-10 或 ISBN-13，並確認校驗碼正確。','error');return;}$('isbn').value=isbn;$('preview').style.display='none';notify('🔎 正在查詢書籍資料…');let b=null;try{const g=await getJSON('https://www.googleapis.com/books/v1/volumes?q='+encodeURIComponent('isbn:'+isbn)+'&maxResults=1');const v=g.items?.[0]?.volumeInfo;if(v){b={isbn,title:v.title||'',author:(v.authors||[]).join('、'),publisher:v.publisher||'',date:v.publishedDate||'',cover:(v.imageLinks?.thumbnail||v.imageLinks?.smallThumbnail||'').replace(/^http:/,'https:')};}}catch(e){console.warn('Google Books:',e);}if(!b||!b.title){try{const o=await getJSON('https://openlibrary.org/isbn/'+isbn+'.json');let author='';if(o.authors?.length){try{const a=await Promise.all(o.authors.slice(0,3).map(x=>getJSON('https://openlibrary.org'+x.key+'.json')));author=a.map(x=>x.name||'').filter(Boolean).join('、');}catch{}}b={isbn,title:o.title||'',author,publisher:(o.publishers||[]).join('、'),date:o.publish_date||'',cover:o.covers?.[0]?'https://covers.openlibrary.org/b/id/'+o.covers[0]+'-M.jpg':'https://covers.openlibrary.org/b/isbn/'+isbn+'-M.jpg'};}catch(e){console.warn('Open Library:',e);}}
-if(!b?.title){try{b=await lookupTaiwanBook(isbn);}catch(e){console.warn('Taiwan Books:',e);}}
-if(b?.title){showPreview(b);notify('✅ 找到書籍！確認資料後就能加入書架。','success');}else{notify('三個書籍來源都沒有查到，或目前無法連線。請手動補上資料；也可查詢國家圖書館 ISBN 中心。','error');openEditor({isbn},true);}}
+async function lookupOpenLibraryBook(isbn){
+  const o=await getJSON('https://openlibrary.org/isbn/'+isbn+'.json');
+  let author='';
+  if(o.authors?.length){try{
+    const a=await Promise.all(o.authors.slice(0,3).map(x=>getJSON('https://openlibrary.org'+x.key+'.json')));
+    author=a.map(x=>x.name||'').filter(Boolean).join('、');
+  }catch(e){console.warn('Open Library authors:',e);}}
+  return o.title?{isbn,title:o.title,author,publisher:(o.publishers||[]).join('、'),date:o.publish_date||'',cover:o.covers?.[0]?'https://covers.openlibrary.org/b/id/'+o.covers[0]+'-M.jpg':'https://covers.openlibrary.org/b/isbn/'+isbn+'-M.jpg'}:null;
+}
+async function lookup(raw){
+  const isbn=isbn13(raw);
+  if(!isbn){notify('請輸入有效的 ISBN-10 或 ISBN-13，並確認校驗碼正確。','error');return;}
+  $('isbn').value=isbn;$('preview').style.display='none';
+  notify('🔎 正在查詢書籍資料…');
+  let b=null,google=null;
+  // Explicitly verified Traditional Chinese corrections take precedence.
+  try{b=await lookupLocalCatalog(isbn,CORRECTIONS_URL,'corrections');}catch(e){console.warn('Book corrections:',e);}
+  // Use the Taiwanese catalog before overseas sources to preserve Chinese metadata.
+  if(!b){try{b=await lookupLocalCatalog(isbn,TAIWAN_BOOKS_URL,'taiwan');}catch(e){console.warn('Taiwan Books:',e);}}
+  // Google Books supplies missing cover information without overwriting local metadata.
+  try{google=await lookupGoogleBook(isbn);}catch(e){console.warn('Google Books:',e);}
+  if(b){if(!b.cover&&google?.cover)b.cover=google.cover;}
+  else if(google?.title)b=google;
+  if(!b?.title){try{b=await lookupOpenLibraryBook(isbn);}catch(e){console.warn('Open Library:',e);}}
+  if(b?.title){showPreview(b);notify('✅ 找到書籍！確認資料後就能加入書架。','success');}
+  else{notify('目前沒有查到這本書，或查詢來源無法連線。請手動補上資料。','error');openEditor({isbn},true);}
+}
 function openEditor(b={},isPreview=false){editPreview=isPreview;editingId=b.id||null;$('modalTitle').textContent=editPreview?'✏️ 補充書籍資料':editingId?'✏️ 編輯我的藏書':'📗 手動新增書籍';for(const [k,id] of Object.entries({isbn:'eIsbn',title:'eTitle',author:'eAuthor',publisher:'ePublisher',date:'eDate',cover:'eCover',status:'eStatus',notes:'eNotes'}))$(id).value=b[k]||(k==='status'?'unread':'');$('modalBg').style.display='flex';$('eTitle').focus();}
 function closeEditor(){$('modalBg').style.display='none';}
 $('lookupBtn').onclick=()=>lookup($('isbn').value);$('isbn').onkeydown=e=>{if(e.key==='Enter')lookup($('isbn').value);};$('saveBtn').onclick=()=>{if(!preview)return;if(preview.isbn&&books.some(b=>b.isbn===preview.isbn)){notify('這本書已經在書架上囉！','error');return;}books.unshift({...preview,id:crypto.randomUUID?.()||String(Date.now())});persist();$('preview').style.display='none';notify('🎉 成功加入倫倫的圖書館！','success');};$('editPreviewBtn').onclick=()=>openEditor(preview,true);$('addManual').onclick=()=>openEditor();$('cancelEdit').onclick=closeEditor;$('modalBg').onclick=e=>{if(e.target===$('modalBg'))closeEditor();};
