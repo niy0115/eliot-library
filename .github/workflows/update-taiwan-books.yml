@@ -6,6 +6,7 @@ on:
     paths:
       - 'tools/import_taiwan_books.py'
       - 'tools/download_official_books.py'
+      - 'tools/split_taiwan_books.py'
       - 'tests/**'
       - '.github/workflows/update-taiwan-books.yml'
   workflow_dispatch:
@@ -32,9 +33,11 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Download and merge official CSV files
         run: python tools/download_official_books.py
+      - name: Split catalog by ISBN prefix
+        run: python tools/split_taiwan_books.py
       - name: Commit updated catalog
         run: |
-          git add data/taiwan-books.json
+          git add data/taiwan-books.json data/taiwan-shards/
           if git diff --cached --quiet; then
             echo "Catalog unchanged"
             exit 0
