@@ -28,24 +28,52 @@ function notify(s,type=''){ $('notice').textContent=s;$('notice').className='not
 function persist(){try{localStorage.setItem(KEY,JSON.stringify(books));}catch{notify('瀏覽器儲存空間不足，請先匯出備份。','error');}render();}
 const statuses={unread:'📕 還沒閱讀',reading:'📖 正在閱讀',done:'⭐ 已經讀完'};
 function render(){ $('total').textContent=books.length;$('done').textContent=books.filter(b=>b.status==='done').length;$('reading').textContent=books.filter(b=>b.status==='reading').length;const q=clean($('search').value).toLowerCase(),f=$('filter').value;const filtered=books.filter(b=>(f==='all'||b.status===f)&&[b.title,b.author,b.isbn].some(v=>clean(v).toLowerCase().includes(q)));$('books').innerHTML=filtered.length?filtered.map(b=>`<article class="book"><img class="cover" alt="書籍封面" src="${esc(safeImage(b.cover)||'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2292%22 height=%22123%22%3E%3Crect width=%2292%22 height=%22123%22 fill=%22%23e0eafa%22/%3E%3Ctext x=%2246%22 y=%2274%22 text-anchor=%22middle%22 font-size=%2240%22%3E📖%3C/text%3E%3C/svg%3E')}" onerror="this.onerror=null;this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2292%22 height=%22123%22%3E%3Crect width=%2292%22 height=%22123%22 fill=%22%23e0eafa%22/%3E%3C/svg%3E'"><div class="info"><h3>${esc(b.title)}</h3><p>${esc(b.author||'作者未提供')}</p><p>${esc(b.publisher||'')} ${esc(b.isbn||'')}</p><span class="tag">${statuses[b.status]||statuses.unread}</span><div class="actions"><button class="ghost tiny" data-action="edit" data-id="${esc(b.id)}">✏️ 編輯</button><button class="ghost tiny" data-action="cycle" data-id="${esc(b.id)}">📖 更新進度</button><button class="ghost tiny" data-action="delete" data-id="${esc(b.id)}">🗑️</button></div></div></article>`).join(''):`<div class="empty"><div class="emoji">📚</div><p>${books.length?'沒有符合條件的書籍':'書架還空空的，掃描第一本書吧！'}</p></div>`;}
-function showPreview(b){preview={status:'unread',notes:'',...b};$('pTitle').textContent=preview.title||'未找到書名';$('pMeta').textContent=[preview.author,preview.publisher,preview.date,preview.isbn?'ISBN '+preview.isbn:''].filter(Boolean).join(' · ');$('pCover').src=safeImage(preview.cover)||'';$('pCover').onerror=()=>{$('pCover').onerror=null;$('pCover').removeAttribute('src');};$('preview').style.display='block';}
+function showPreview(b){preview={status:'unread',notes:'',...b};$('pTitle').textContent=preview.title||'未找到書名';$('pMeta').textContent=[preview.author,preview.publisher,preview.date,preview.isbn?'ISBN '+preview.isbn:'',preview.source?'資料來源：'+(sourceNames[preview.source]||preview.source):''].filter(Boolean).join(' · ');$('pCover').src=safeImage(preview.cover)||'';$('pCover').onerror=()=>{$('pCover').onerror=null;$('pCover').removeAttribute('src');};$('preview').style.display='block';}
 async function getJSON(url){const c=new AbortController(),timer=setTimeout(()=>c.abort(),11000);try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw Error('HTTP '+r.status);return await r.json();}finally{clearTimeout(timer);}}
 const TAIWAN_BOOKS_URL='data/taiwan-books.json';
+const TAIWAN_MANIFEST_URL='data/taiwan-shards/manifest.json';
 const CORRECTIONS_URL='data/book-corrections.json';
-let taiwanBooksPromise=null,correctionsPromise=null;
-async function lookupLocalCatalog(isbn,url,promiseName){
-  let p=promiseName==='corrections'?correctionsPromise:taiwanBooksPromise;
-  if(!p){
-    p=getJSON(url).catch(e=>{if(promiseName==='corrections')correctionsPromise=null;else taiwanBooksPromise=null;throw e;});
-    if(promiseName==='corrections')correctionsPromise=p;else taiwanBooksPromise=p;
+const sourceNames={corrections:'中文補充書目',taiwan:'台灣官方書目',google:'Google Books',openlibrary:'Open Library',manual:'手動輸入'};
+let correctionsPromise=null,manifestPromise=null,legacyBooksPromise=null;
+const shardPromises=new Map();
+function loadCorrections(){
+  if(!correctionsPromise)correctionsPromise=getJSON(CORRECTIONS_URL).catch(e=>{correctionsPromise=null;throw e;});
+  return correctionsPromise;
+}
+function loadManifest(){
+  if(!manifestPromise)manifestPromise=getJSON(TAIWAN_MANIFEST_URL).catch(e=>{manifestPromise=null;throw e;});
+  return manifestPromise;
+}
+async function lookupLocalBook(isbn){
+  let data;
+  try{data=await loadCorrections();}catch(e){console.warn('Corrections:',e);}
+  const corrected=data?.books?.[isbn];
+  if(corrected?.title)return {isbn,...corrected,source:'corrections'};
+  try{
+    const manifest=await loadManifest();
+    const prefix=isbn.slice(0,manifest.prefixLength||5);
+    if(!manifest.prefixes?.includes(prefix))return null;
+    let p=shardPromises.get(prefix);
+    if(!p){
+      p=getJSON('data/taiwan-shards/'+prefix+'.json').catch(e=>{shardPromises.delete(prefix);throw e;});
+      shardPromises.set(prefix,p);
+    }
+    data=await p;
+  }catch(e){
+    // Older deployments without manifest continue to work until shards deploy.
+    if(e.message!=='HTTP 404'){console.warn('Taiwan shard:',e);return null;}
+    try{
+      if(!legacyBooksPromise)legacyBooksPromise=getJSON(TAIWAN_BOOKS_URL).catch(err=>{legacyBooksPromise=null;throw err;});
+      data=await legacyBooksPromise;
+    }catch(err){console.warn('Taiwan catalog:',err);return null;}
   }
-  const data=await p,b=data.books?.[isbn];
-  return b?.title?{isbn,title:b.title,author:b.author||'',publisher:b.publisher||'',date:b.date||'',cover:b.cover||''}:null;
+  const b=data?.books?.[isbn];
+  return b?.title?{isbn,...b,source:'taiwan'}:null;
 }
 async function lookupGoogleBook(isbn){
   const g=await getJSON('https://www.googleapis.com/books/v1/volumes?q='+encodeURIComponent('isbn:'+isbn)+'&maxResults=1');
   const v=g.items?.[0]?.volumeInfo;
-  return v?.title?{isbn,title:v.title,author:(v.authors||[]).join('、'),publisher:v.publisher||'',date:v.publishedDate||'',cover:(v.imageLinks?.thumbnail||v.imageLinks?.smallThumbnail||'').replace(/^http:/,'https:')}:null;
+  return v?.title?{isbn,title:v.title,author:(v.authors||[]).join('、'),publisher:v.publisher||'',date:v.publishedDate||'',cover:(v.imageLinks?.thumbnail||v.imageLinks?.smallThumbnail||'').replace(/^http:/,'https:'),source:'google'}:null;
 }
 async function lookupOpenLibraryBook(isbn){
   const o=await getJSON('https://openlibrary.org/isbn/'+isbn+'.json');
@@ -54,20 +82,16 @@ async function lookupOpenLibraryBook(isbn){
     const a=await Promise.all(o.authors.slice(0,3).map(x=>getJSON('https://openlibrary.org'+x.key+'.json')));
     author=a.map(x=>x.name||'').filter(Boolean).join('、');
   }catch(e){console.warn('Open Library authors:',e);}}
-  return o.title?{isbn,title:o.title,author,publisher:(o.publishers||[]).join('、'),date:o.publish_date||'',cover:o.covers?.[0]?'https://covers.openlibrary.org/b/id/'+o.covers[0]+'-M.jpg':'https://covers.openlibrary.org/b/isbn/'+isbn+'-M.jpg'}:null;
+  return o.title?{isbn,title:o.title,author,publisher:(o.publishers||[]).join('、'),date:o.publish_date||'',cover:o.covers?.[0]?'https://covers.openlibrary.org/b/id/'+o.covers[0]+'-M.jpg':'https://covers.openlibrary.org/b/isbn/'+isbn+'-M.jpg',source:'openlibrary'}:null;
 }
 async function lookup(raw){
   const isbn=isbn13(raw);
   if(!isbn){notify('請輸入有效的 ISBN-10 或 ISBN-13，並確認校驗碼正確。','error');return;}
   $('isbn').value=isbn;$('preview').style.display='none';
   notify('🔎 正在查詢書籍資料…');
-  let b=null,google=null;
-  // Explicitly verified Traditional Chinese corrections take precedence.
-  try{b=await lookupLocalCatalog(isbn,CORRECTIONS_URL,'corrections');}catch(e){console.warn('Book corrections:',e);}
-  // Use the Taiwanese catalog before overseas sources to preserve Chinese metadata.
-  if(!b){try{b=await lookupLocalCatalog(isbn,TAIWAN_BOOKS_URL,'taiwan');}catch(e){console.warn('Taiwan Books:',e);}}
-  // Google Books supplies missing cover information without overwriting local metadata.
-  try{google=await lookupGoogleBook(isbn);}catch(e){console.warn('Google Books:',e);}
+  let b=await lookupLocalBook(isbn),google=null;
+  // Google can provide a cover without overriding Taiwanese metadata.
+  if(!b?.cover || !b){try{google=await lookupGoogleBook(isbn);}catch(e){console.warn('Google Books:',e);}}
   if(b){if(!b.cover&&google?.cover)b.cover=google.cover;}
   else if(google?.title)b=google;
   if(!b?.title){try{b=await lookupOpenLibraryBook(isbn);}catch(e){console.warn('Open Library:',e);}}
@@ -77,7 +101,7 @@ async function lookup(raw){
 function openEditor(b={},isPreview=false){editPreview=isPreview;editingId=b.id||null;$('modalTitle').textContent=editPreview?'✏️ 補充書籍資料':editingId?'✏️ 編輯我的藏書':'📗 手動新增書籍';for(const [k,id] of Object.entries({isbn:'eIsbn',title:'eTitle',author:'eAuthor',publisher:'ePublisher',date:'eDate',cover:'eCover',status:'eStatus',notes:'eNotes'}))$(id).value=b[k]||(k==='status'?'unread':'');$('modalBg').style.display='flex';$('eTitle').focus();}
 function closeEditor(){$('modalBg').style.display='none';}
 $('lookupBtn').onclick=()=>lookup($('isbn').value);$('isbn').onkeydown=e=>{if(e.key==='Enter')lookup($('isbn').value);};$('saveBtn').onclick=()=>{if(!preview)return;if(preview.isbn&&books.some(b=>b.isbn===preview.isbn)){notify('這本書已經在書架上囉！','error');return;}books.unshift({...preview,id:crypto.randomUUID?.()||String(Date.now())});persist();$('preview').style.display='none';notify('🎉 成功加入倫倫的圖書館！','success');};$('editPreviewBtn').onclick=()=>openEditor(preview,true);$('addManual').onclick=()=>openEditor();$('cancelEdit').onclick=closeEditor;$('modalBg').onclick=e=>{if(e.target===$('modalBg'))closeEditor();};
-$('confirmEdit').onclick=()=>{const b={};for(const [k,id] of Object.entries({isbn:'eIsbn',title:'eTitle',author:'eAuthor',publisher:'ePublisher',date:'eDate',cover:'eCover',status:'eStatus',notes:'eNotes'}))b[k]=clean($(id).value);if(!b.title){alert('請輸入書名');return;}if(b.isbn){const converted=isbn13(b.isbn);if(!converted){alert('請輸入有效的 ISBN-10 或 ISBN-13，或留空');return;}b.isbn=converted;}if(b.isbn&&books.some(x=>x.isbn===b.isbn&&x.id!==editingId)&&!editPreview){alert('相同 ISBN 已經存在於書架');return;}if(editPreview){showPreview(b);closeEditor();return;}if(editingId){const i=books.findIndex(x=>x.id===editingId);if(i>=0)books[i]={...books[i],...b};}else books.unshift({...b,id:crypto.randomUUID?.()||String(Date.now())});persist();closeEditor();};
+$('confirmEdit').onclick=()=>{const b={};for(const [k,id] of Object.entries({isbn:'eIsbn',title:'eTitle',author:'eAuthor',publisher:'ePublisher',date:'eDate',cover:'eCover',status:'eStatus',notes:'eNotes'}))b[k]=clean($(id).value);if(!b.title){alert('請輸入書名');return;}if(b.isbn){const converted=isbn13(b.isbn);if(!converted){alert('請輸入有效的 ISBN-10 或 ISBN-13，或留空');return;}b.isbn=converted;}if(b.isbn&&books.some(x=>x.isbn===b.isbn&&x.id!==editingId)&&!editPreview){alert('相同 ISBN 已經存在於書架');return;}if(editPreview){b.source=preview?.source||'manual';showPreview(b);closeEditor();return;}if(!editingId)b.source='manual';if(editingId){const i=books.findIndex(x=>x.id===editingId);if(i>=0)books[i]={...books[i],...b};}else books.unshift({...b,id:crypto.randomUUID?.()||String(Date.now())});persist();closeEditor();};
 $('books').onclick=e=>{const btn=e.target.closest('button[data-action]');if(!btn)return;const b=books.find(x=>x.id===btn.dataset.id);if(!b)return;switch(btn.dataset.action){case 'edit':openEditor(b);break;case 'cycle':b.status=b.status==='unread'?'reading':b.status==='reading'?'done':'unread';persist();break;case 'delete':if(confirm('確定要從書架移除「'+b.title+'」嗎？')){books=books.filter(x=>x.id!==b.id);persist();}break;}};
 $('search').oninput=render;$('filter').onchange=render;
 $('exportBtn').onclick=()=>{const blob=new Blob([JSON.stringify({app:'倫倫的圖書館',version:1,exportedAt:new Date().toISOString(),books},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='倫倫的圖書館_備份_'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(url);};$('importBtn').onclick=()=>$('fileInput').click();$('fileInput').onchange=async e=>{const f=e.target.files?.[0];if(!f)return;try{const parsed=JSON.parse(await f.text()),arr=Array.isArray(parsed)?parsed:parsed.books;if(!Array.isArray(arr)||arr.some(x=>!x||typeof x.title!=='string'))throw Error('格式錯誤');if(!confirm('要匯入 '+arr.length+' 本書嗎？相同 ISBN 的書會保留目前書架資料。'))return;const existing=new Set(books.map(b=>b.isbn).filter(Boolean));for(const x of arr){if(x.isbn&&existing.has(x.isbn))continue;const id=crypto.randomUUID?.()||String(Date.now()+Math.random());books.push({id,isbn:clean(x.isbn),title:clean(x.title),author:clean(x.author),publisher:clean(x.publisher),date:clean(x.date),cover:safeImage(x.cover),status:['unread','reading','done'].includes(x.status)?x.status:'unread',notes:clean(x.notes)});if(x.isbn)existing.add(x.isbn);}persist();notify('✅ 備份匯入成功！','success');}catch(err){notify('匯入失敗：請確認檔案是此網頁匯出的 JSON 備份。','error');}e.target.value='';};
