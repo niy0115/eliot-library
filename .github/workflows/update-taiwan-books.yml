@@ -1,0 +1,38 @@
+name: Update Taiwan book catalog
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 8 * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-taiwan-books
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test CSV importer
+        run: python -m unittest discover -s tests -v
+      - name: Download and merge official CSV files
+        run: python tools/download_official_books.py
+      - name: Commit updated catalog
+        run: |
+          git add data/taiwan-books.json
+          if git diff --cached --quiet; then
+            echo "Catalog unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update Taiwan book catalog from official open data"
+          git push
