@@ -1,5 +1,5 @@
 {
-  "source": "Verified against publisher listing https://www.crown.com.tw/view.aspx?bc=375267",
+  "source": "Verified Traditional Chinese bibliographic records; see per-ISBN sources",
   "updatedAt": "2026-10-04",
   "books": {
     "9789573330752": {
@@ -7,6 +7,16 @@
       "author": "丹尼爾．凱斯",
       "publisher": "皇冠文化出版有限公司",
       "date": "2014-06-06"
+    },
+    "9786269813575": {
+      "title": "魔法學院兒童情緒繪本：為什麼不跟我一起？【學會做好自己】",
+      "author": "雅希",
+      "publisher": "小果文創",
+      "date": "2024-11-27"
     }
+  },
+  "sources": {
+    "9789573330752": "https://www.crown.com.tw/view.aspx?bc=375267",
+    "9786269813575": "https://www.taaze.tw/products/11101052271.html"
   }
 }
