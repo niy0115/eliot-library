@@ -24,7 +24,7 @@ function valid(s){s=normalize(s);if(/^(978|979)\d{10}$/.test(s))return [...s].re
 function isbn13(raw){const s=normalize(raw);if(!valid(s))return '';if(s.length===13)return s;const stem='978'+s.slice(0,9);const sum=[...stem].reduce((total,d,i)=>total+Number(d)*(i%2?3:1),0);return stem+((10-sum%10)%10);}
 const esc=s=>clean(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const COVER_FALLBACK='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="160" viewBox="0 0 120 160"><rect width="120" height="160" rx="10" fill="#dce8f4"/><rect x="30" y="34" width="60" height="86" rx="5" fill="#fff" stroke="#7294ba" stroke-width="3"/><path d="M60 34v86M40 55h12M68 55h12M40 67h12M68 67h12" stroke="#7294ba" stroke-width="3" stroke-linecap="round"/></svg>');
-const safeImage=url=>{const s=clean(url);if(/^data:image\\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(s)&&s.length<=550000)return s;try{const u=new URL(s);return ['https:','http:'].includes(u.protocol)?u.href.replace(/^http:/,'https:'):'';}catch{return '';}};
+const safeImage=url=>{const s=clean(url);if(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(s)&&s.length<=550000)return s;try{const u=new URL(s);return ['https:','http:'].includes(u.protocol)?u.href.replace(/^http:/,'https:'):'';}catch{return '';}};
 async function localCover(file){
  if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>15*1024*1024)throw Error('請選擇 15MB 以下的 JPG、PNG 或 WebP 圖片');
  const img=await new Promise((resolve,reject)=>{const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{URL.revokeObjectURL(u);resolve(i);};i.onerror=()=>{URL.revokeObjectURL(u);reject(Error('無法讀取這張圖片'));};i.src=u;});
