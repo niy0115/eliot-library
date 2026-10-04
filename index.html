@@ -112,35 +112,51 @@ function openEditor(b={},isPreview=false){editPreview=isPreview;editingId=b.id||
 function closeEditor(){$('modalBg').style.display='none';}
 $('showExternal').onclick=()=>{externalLinks();$('externalAssist').style.display='block';};$('hideExternal').onclick=()=>$('externalAssist').style.display='none';$('eIsbn').onchange=()=>{if($('externalAssist').style.display==='block')externalLinks();};
 function parsePastedBook(raw){
-  const fields={},lines=String(raw||'').replace(/\r/g,'').split('\n').map(x=>x.trim()).filter(Boolean);
-  const labels={title:['書名','書籍名稱','商品名稱','title'],author:['作者','著者','author'],publisher:['出版社','出版者','publisher'],date:['出版日期','出版時間','出版年','published'],isbn:['isbn','isbn-10','isbn-13'],cover:['封面網址','封面圖片網址','cover']};
-  for(const line of lines){
-    const m=line.match(/^([^\t：:]{1,25})(?:\t+|\s*[：:]\s*)(.+)$/);
-    if(!m)continue;
-    const field=Object.keys(labels).find(k=>labels[k].includes(m[1].trim().toLowerCase()));
-    if(field&&!fields[field])fields[field]=m[2].trim();
+  const fields={},lines=String(raw||'').replace(/\r/g,'').replace(/\u00a0/g,' ').split('\n').map(x=>x.trim()).filter(Boolean);
+  const names={title:['書名','書籍名稱','商品名稱','title','book title'],author:['作者','著者','author','authors'],publisher:['出版社','出版者','出版機構','publisher','published by'],date:['出版日期','出版時間','出版年','出版年月','發行日期','publish date','publication date','published date','published'],isbn:['isbn','isbn-10','isbn-13','isbn 10','isbn 13','國際標準書號'],cover:['封面網址','封面圖片網址','cover url'],pages:['頁數','pages']};
+  const keys=new Map(Object.entries(names).flatMap(([f,labels])=>labels.map(label=>[label,f])));
+  const used=new Set();
+  function put(label,value){const k=keys.get(label.trim().toLowerCase());if(!k||!value.trim())return false;if(!fields[k])fields[k]=value.trim();return true;}
+  // Extract compact inline fields before parsing individual lines.
+  const inlineLabel='(?:作者|著者|出版社|出版者|出版日期|出版年|ISBN(?:[- ]?1[03])?)';
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i],re=new RegExp('('+inlineLabel+')[：:]\\s*(.*?)(?=\\s+'+inlineLabel+'[：:]|$)','gi');
+    const matches=[...line.matchAll(re)];
+    if(matches.length>1){for(const m of matches)put(m[1],m[2]);used.add(i);continue;}
+    const pair=line.match(/^([^\t：:]{1,26})(?:\t+|\s*[：:]\s*)(.+)$/);
+    if(pair&&put(pair[1],pair[2])){used.add(i);continue;}
+    const flat=line.match(/^(作者|著者|出版社|出版者|出版日期|出版年|ISBN(?:[- ]?1[03])?|頁數)\s+(.+)$/i);
+    if(flat&&put(flat[1],flat[2])){used.add(i);continue;}
+    if(keys.has(line.toLowerCase())&&i+1<lines.length&&lines[i+1].length<250){
+      put(line,lines[i+1]);used.add(i);used.add(i+1);i++;
+    }
   }
   if(fields.publisher){
-    const pub=fields.publisher.match(/^(.*?)[,，]\s*((?:19|20)\d{2})(?:年)?\s*$/);
-    if(pub){fields.publisher=pub[1].trim();if(!fields.date)fields.date=pub[2];}
+    const m=fields.publisher.match(/^(.*?)[,，]\s*((?:19|20)\d{2})(?:年)?\s*$/);
+    if(m){fields.publisher=m[1].trim();if(!fields.date)fields.date=m[2];}
   }
-  if(fields.isbn){
-    const candidates=fields.isbn.split(/[,，、;；]\s*/).map(x=>x.trim());
-    fields.isbn=candidates.map(x=>isbn13(x)).find(Boolean)||'';
+  if(fields.date){
+    const m=fields.date.match(/((?:19|20)\d{2})(?:\s*[\/.\-年]\s*(\d{1,2}))?(?:\s*[\/.\-月]\s*(\d{1,2}))?/);
+    if(m)fields.date=m[1]+(m[2]?'-'+m[2].padStart(2,'0'):'')+(m[3]?'-'+m[3].padStart(2,'0'):'');
   }
+  const isbnCandidates=(fields.isbn||lines.join(' ')).split(/[,，;；、]/).flatMap(v=>v.match(/(?<!\d)(?:97[89][\d -]{10,18}|[\d -]{9,17}[\dXx])(?!\d)/g)||[]).map(x=>normalize(x)).filter(x=>valid(x));
+  const found=isbnCandidates.find(x=>x.length===13)||isbnCandidates[0];
+  if(found)fields.isbn=isbn13(found);else delete fields.isbn;
   if(!fields.title){
-    const first=lines.find(x=>!x.includes('\t')&&!/^(作者|書名|ISBN|出版者|出版社|頁數)\s*[：:]/i.test(x)&&!/^https?:\/\//i.test(x)&&x.length<=120);
-    if(first)fields.title=first;
+    const first=lines.find((x,i)=>!used.has(i)&&x.length>=2&&x.length<=110&&!/^(?:https?:\/\/|ISBN\b|書籍搜尋|搜尋結果|購物車|內容簡介|商品簡介|目錄|博客來|讀冊生活|Google Books|Open Library|頁數)/i.test(x)&&!/^[-\d\s,，]+$/.test(x));
+    if(first)fields.title=first.replace(/^《(.+)》$/,'$1');
   }
   return fields;
 }
 $('parseExternal').onclick=()=>{
   const fields=parsePastedBook($('externalText').value);let count=0;
+  const original=isbn13($('eIsbn').value);
   for(const [key,id] of Object.entries({isbn:'eIsbn',title:'eTitle',author:'eAuthor',publisher:'ePublisher',date:'eDate',cover:'eCover'})){
-    if(!fields[key]||(key==='cover'&&!safeImage(fields[key])))continue;
+    if(!fields[key]||(key==='cover'&&!safeImage(fields[key]))||(key==='isbn'&&original&&original!==fields[key]))continue;
     $(id).value=fields[key];count++;
   }
-  $('externalNotice').textContent=count?'已填入 '+count+' 個欄位，請檢查後儲存。':'無法辨識，請貼上 Google Books 資訊或使用「書名：…」「作者：…」格式。';
+  const mismatch=original&&fields.isbn&&original!==fields.isbn;
+  $('externalNotice').textContent=count?'已填入 '+count+' 個欄位，請確認後儲存。'+(mismatch?' 注意：貼上的 ISBN 與掃描的不同，已保留原 ISBN，請確認版本。':''):'未辨識欄位；請複製書籍詳情文字，而非僅貼上網址。';
   $('externalNotice').className='notice '+(count?'success':'error');
 };
 $('lookupBtn').onclick=()=>lookup($('isbn').value);$('isbn').onkeydown=e=>{if(e.key==='Enter')lookup($('isbn').value);};$('saveBtn').onclick=()=>{if(!preview)return;if(preview.isbn&&books.some(b=>b.isbn===preview.isbn)){notify('這本書已經在書架上囉！','error');return;}books.unshift({...preview,id:crypto.randomUUID?.()||String(Date.now())});persist();$('preview').style.display='none';notify('🎉 成功加入倫倫的圖書館！','success');};$('editPreviewBtn').onclick=()=>openEditor(preview,true);$('addManual').onclick=()=>openEditor();$('cancelEdit').onclick=closeEditor;$('modalBg').onclick=e=>{if(e.target===$('modalBg'))closeEditor();};
