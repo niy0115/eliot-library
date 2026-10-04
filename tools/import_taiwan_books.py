@@ -13,18 +13,22 @@ from pathlib import Path
 
 OUT = Path(__file__).resolve().parents[1] / "data" / "taiwan-books.json"
 FIELDS = {
-    "isbn": ("ISBN", "isbn", "國際標準書號", "國際標準書號(ISBN)"),
-    "title": ("書名", "題名", "書名/題名", "title", "Title"),
-    "author": ("作者", "著者", "author", "Author"),
-    "publisher": ("出版社", "出版者", "publisher", "Publisher"),
-    "date": ("出版日期", "出版年", "出版年份", "date", "year"),
+    "isbn": ("ISBN", "isbn", "ISBN (020$a$c)", "國際標準書號", "國際標準書號(ISBN)"),
+    "title": ("書名", "題名", "書名 (245$a$b)", "書名/題名", "title", "Title"),
+    "author": ("作者", "著者", "編著者 (245$c)", "author", "Author"),
+    "publisher": ("出版社", "出版者", "出版項 (264)", "出版項 (260)", "publisher", "Publisher"),
+    "date": ("出版日期", "出版年", "出版年 (008/07-10)", "出版年份", "date", "year"),
 }
 def field(row, names):
     normalized = {k.strip().lower().replace(" ",""): v for k,v in row.items() if k}
     for name in names:
         v = normalized.get(name.strip().lower().replace(" ",""))
-        if v: return str(v).strip()
+        if v: return str(v).replace("\\x1e", "").strip()
     return ""
+
+def parse_publisher(raw):
+    match = re.search(r":;?\\s*([^;,]+)", raw)
+    return match.group(1).strip(" []") if match else raw
 
 def import_file(path, books):
     count = 0
@@ -42,7 +46,7 @@ def import_file(path, books):
         raise ValueError(f"Cannot identify ISBN column in {path}; inspect CSV headers")
     for row in rows:
         raw = field(row, FIELDS["isbn"])
-        title = field(row, FIELDS["title"])
+        title = field(row, FIELDS["title"]).rstrip(" /;")
         if not title: continue
         for isbn in set(re.findall(r"(?<!\\d)(?:97[89])[\\d -]{10,17}(?!\\d)", raw)):
             isbn = re.sub(r"[^0-9]", "", isbn)
@@ -51,7 +55,7 @@ def import_file(path, books):
             if sum(int(n)*(1 if i%2==0 else 3) for i,n in enumerate(isbn))%10: continue
             if isbn not in books:
                 books[isbn] = {"title": title, "author": field(row,FIELDS["author"]),
-                               "publisher": field(row,FIELDS["publisher"]),
+                               "publisher": parse_publisher(field(row,FIELDS["publisher"])),
                                "date": field(row,FIELDS["date"])}
                 count += 1
     return count
