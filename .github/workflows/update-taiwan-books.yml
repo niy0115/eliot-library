@@ -1,6 +1,13 @@
 name: Update Taiwan book catalog
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/import_taiwan_books.py'
+      - 'tools/download_official_books.py'
+      - 'tests/**'
+      - '.github/workflows/update-taiwan-books.yml'
   workflow_dispatch:
   schedule:
     - cron: "17 2 8 * *"
