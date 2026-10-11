@@ -1,0 +1,26 @@
+{
+  "name": "倫倫的圖書館",
+  "short_name": "倫倫圖書館",
+  "description": "倫倫的個人藏書、閱讀與學校登記紀錄",
+  "lang": "zh-TW",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#102842",
+  "theme_color": "#102842",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
